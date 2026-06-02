@@ -1,28 +1,72 @@
-# Moore Followup Training and Inference
+# Moore ILN Follow-up — Model Training
 
-This is the training source code for a set of transformer (RoBERTa)-based model to predict whether after receiving a CT in the ED, a potential incidental lung nodule finding (ILN) will require a followup or not. We classify into three classes NO_FOLLOWUP, CONDITIONAL_FOLLOWUP, and HARD_FOLLOWUP. The formal definitions are below:
+Training and evaluation code for the NLP system in *"Using natural language processing to identify emergency department patients with incidental lung nodules requiring follow-up"* (Moore, Socrates, et al., **Academic Emergency Medicine**, 2025; [doi:10.1111/acem.15080](https://doi.org/10.1111/acem.15080)).
 
-**HARD_FOLLOWUP**: The patient definitively should get a followup visit for a possible ILN
-**CONDITION_FOLLOWUP**: The patient may or may not need a followup visit for a possible ILN
-**NO_FOLLOWUP**: The patient does not need a followup visit for a possible ILN
+The system reads free-text ED chest CT reports and flags patients with an incidental lung nodule (ILN) needing follow-up — closing the loop on findings often lost after the ED visit.
 
-The model was trained on Yale-New Haven Health System ED CT reports from 2014-2021.
+> Research / training code. The packaged, deployable app is **[moore-followup-docker](https://github.com/vsocrates/moore-followup-docker)**.
 
-# Model Performance
+## Pipeline at a glance
 
-Our best performing model achieves state-of-the-art performance compared to all other models found in the literature. We specifically ran it against the iScout model found in [Information from Searching Content with an Ontology-Utilizing Toolkit (iSCOUT) ](https://pubmed.ncbi.nlm.nih.gov/22349993/).   
+A three-stage cascade, each stage an independently trained classifier:
 
-Please check the [iScout.ipynb](https://github.com/vsocrates/moore-followup/blob/main/notebooks/iScout.ipynb) notebook to see these results.
+1. **Malignancy exclusion** — drop prior, active, or obvious cancer (not *incidental*).
+2. **Nodule detection** — is a lung nodule, opacity, density, or granuloma described?
+3. **Follow-up categorization** — `NO`, `CONDITIONAL`, or `HARD` follow-up.
 
+![Training and evaluation pipeline](images/training_pipeline.png)
+
+Cohort: 26,545 chest CT reports across 17,024 patients, three EDs, 2014–2021. Annotation in [Prodigy](https://prodi.gy/); training on spaCy / spacy-transformers; runs on the Yale HPC cluster via SLURM.
+
+## Key modeling decisions
+
+1. **Three-stage cascade, not one multiclass model.**
+   - *Rationale:* each clinical sub-decision is validated and reported separately and can be retrained independently; the accepted cost is error propagation (a stage-1 miss can't be recovered downstream).
+
+2. **RoBERTa-base + bag-of-words ensemble** (`spacy.TextCatEnsemble.v2`).
+   - *Rationale:* the linear model catches templated, high-signal phrasing cheaply while RoBERTa handles negation and hedging; strided spans (window 128 / stride 96) keep recommendations from being truncated past RoBERTa's 512-token limit.
+
+3. **Custom class-weighted loss.**
+   - *Rationale:* follow-up classes are severely imbalanced (~`[1, 75, 24]`), so a standard categorizer ignores the rare HARD class; subclassing spaCy's `TextCategorizer` to weight the loss buys recall where a miss matters most, trading some majority-class precision. See `Weighted_TextCategorizer.py`.
+
+4. **Enriched-sample fine-tuning to cut malignancy false positives.**
+   - *Rationale:* initial malignancy precision was 0.70 (27 FPs / 1000); re-annotating a sequestered, enriched sample of 300 model-flagged reports and retraining raised it to 0.85 (11 FPs), so fewer true incidentals were wrongly excluded.
+
+5. **Learning-curve-guided annotation.**
+   - *Rationale:* physician labels were the scarcest resource, so curves showed where added annotations stopped paying off — directing MD time to the rarer malignancy and follow-up tasks.
 
 ## Results
 
-|                      | Precision    | Recall       | F1           |
-|----------------------|--------------|--------------|--------------|
-| NO FOLLOWUP          | 0.9880952381 | 0.9431818182 | 0.9651162791 |
-| CONDITIONAL FOLLOWUP | 0.9117647059 | 0.8857142857 | 0.8985507246 |
-| HARD FOLLOWUP        | 0.8181818182 | 0.9642857143 | 0.8852459016 |
+Evaluated on **1,000 held-out reports** with blinded physician review and third-reviewer adjudication as the criterion standard.
 
-## Docker Container
+**End-to-end accuracy: 93.3%** (95% CI 87.4–96.6) at the clinically meaningful task — correctly identifying patients with a nodule, no malignancy, and recommended follow-up (112 of 120).
 
-We also developed a Docker container for non-computational scientists to recreate this pipeline with an easy-to-use UI located at [Docker Hub](https://hub.docker.com/repository/docker/vsocrates/moore/general). The code and instructions can be found at https://github.com/vsocrates/moore-followup-docker. 
+| Stage | Precision | Recall | F1 |
+|---|---|---|---|
+| Malignancy exclusion | 0.85 | 0.71 | 0.77 |
+| Nodule detection | 0.87 | 0.83 | 0.85 |
+| Follow-up categorization | 0.82 | 0.90 | 0.85 |
+
+Discrimination (AUROC): malignancy 0.96, nodule 0.88, no follow-up 0.99, hard follow-up 0.97, conditional follow-up 0.94. Inter-rater agreement (κ): 0.86 / 0.82 / 0.83 across the three tasks. Overall, the pipeline performs comparably or better than prior published models.
+
+Run on all 26,545 reports: 10.1% had prior, active, or obvious malignancy; of the rest, 37.1% had a nodule, for a 12.4% overall follow-up rate.
+
+## Repository layout
+
+| Path | Contents |
+|---|---|
+| `Weighted_TextCategorizer.py` | Custom spaCy pipe with class-weighted loss |
+| `run_followup_pipeline.py` | Inference: preprocess → cascade → labeled output |
+| `config/` | Per-stage spaCy configs; `_bow_` and `_trf_` variants |
+| `slurm_scripts/` | HPC jobs: de-identification, training, learning curves |
+| `notebooks/` | Annotation prep, dev metrics, SHAP attention, iSCOUT comparison |
+
+> Research code optimized for iteration, not a production package. The deployable artifact is the [Docker app](https://github.com/vsocrates/moore-followup-docker).
+
+## Citation
+
+Moore CL, Socrates V, Hesami M, Denkewicz RP, Cavallo JJ, Venkatesh AK, Taylor RA. *Using natural language processing to identify emergency department patients with incidental lung nodules requiring follow-up.* Acad Emerg Med. 2025;32(3):274–283.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
