@@ -14,7 +14,7 @@ A three-stage cascade, each stage an independently trained classifier:
 2. **Nodule detection** — is a lung nodule, opacity, density, or granuloma described?
 3. **Follow-up categorization** — `NO`, `CONDITIONAL`, or `HARD` follow-up.
 
-![Training and evaluation pipeline](images/training_pipeline.png)
+<img src="images/training_pipeline.png" alt="Training and evaluation pipeline" width="800"/>
 
 Cohort: 26,545 chest CT reports across 17,024 patients, three EDs, 2014–2021. Annotation in [Prodigy](https://prodi.gy/); training on spaCy / spacy-transformers; runs on the Yale HPC cluster via SLURM.
 
@@ -50,6 +50,14 @@ Evaluated on **1,000 held-out reports** with blinded physician review and third-
 Discrimination (AUROC): malignancy 0.96, nodule 0.88, no follow-up 0.99, hard follow-up 0.97, conditional follow-up 0.94. Inter-rater agreement (κ): 0.86 / 0.82 / 0.83 across the three tasks. Overall, the pipeline performs comparably or better than prior published models.
 
 Run on all 26,545 reports: 10.1% had prior, active, or obvious malignancy; of the rest, 37.1% had a nodule, for a 12.4% overall follow-up rate.
+
+<img src="images/perf_curves.png" alt="Pipeline Performance" width="550"/>
+
+## Interpretability
+
+Subset of notes were evaluated for interpretability using [SHAP values over text](https://shap.readthedocs.io/en/latest/text_examples.html). 
+
+<img src="images/shapvalues.png" alt="Explainability with Shapley values" width="800"/>
 
 ## Repository layout
 
